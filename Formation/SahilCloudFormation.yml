@@ -1,0 +1,199 @@
+Resources:
+  Bucket:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      BucketName: "store-nsfw-docs"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  TopicSNS:
+    Type: "AWS::SNS::Topic"
+
+  SNSSUB:
+    Type: "AWS::SNS::Subscription"
+    Properties:
+      Protocol: "email"
+      TopicArn:
+        Ref: "TopicSNS"
+      Endpoint: "dalvisahil.sd@gmail.com"
+
+  FirstLambda:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      FunctionName: ProjectLambda
+      Code:
+        S3Bucket: "lambda-codecloud"
+        S3Key: "project.zip"
+      Handler: index.handler
+      Role: arn:aws:iam::925299567289:role/LabRole
+      Runtime: nodejs14.x
+      Timeout: 50
+      Environment:
+        Variables:
+          SNS_TOPIC_ARN: !Ref TopicSNS
+
+  ApiGateway:
+    Type: "AWS::ApiGateway::RestApi"
+    Properties:
+      Name: "UploadAPI"
+      EndpointConfiguration:
+        Types:
+          - "REGIONAL"
+
+  Response4:
+    Type: "AWS::ApiGateway::GatewayResponse"
+    Properties:
+      ResponseParameters:
+        gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+        gatewayresponse.header.Access-Control-Allow-Methods: "'OPTIONS,POST'"
+        gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+      ResponseType: "DEFAULT_4XX"
+      RestApiId:
+        Ref: "ApiGateway"
+      StatusCode: "200"
+
+  Response5:
+    Type: "AWS::ApiGateway::GatewayResponse"
+    Properties:
+      ResponseParameters:
+        gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+        gatewayresponse.header.Access-Control-Allow-Methods: "'OPTIONS,POST'"
+        gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+      ResponseType: "DEFAULT_5XX"
+      RestApiId:
+        Ref: "ApiGateway"
+      StatusCode: "200"
+
+  ApiResource:
+    Type: "AWS::ApiGateway::Resource"
+    Properties:
+      RestApiId:
+        Ref: "ApiGateway"
+      ParentId:
+        Fn::GetAtt: ["ApiGateway", "RootResourceId"]
+      PathPart: "upload"
+
+  ApiOptions:
+    Type: "AWS::ApiGateway::Method"
+    Properties:
+      RestApiId:
+        Ref: "ApiGateway"
+      ResourceId:
+        Ref: "ApiResource"
+      HttpMethod: "OPTIONS"
+      AuthorizationType: "NONE"
+      Integration:
+        Type: "MOCK"
+        IntegrationResponses:
+          - StatusCode: "200"
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,POST'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: "{}"
+      MethodResponses:
+        - StatusCode: "200"
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: false
+            method.response.header.Access-Control-Allow-Methods: false
+            method.response.header.Access-Control-Allow-Origin: false
+          ResponseModels:
+            application/json: "Empty"
+
+  ApiPost:
+    Type: "AWS::ApiGateway::Method"
+    Properties:
+      RestApiId:
+        Ref: "ApiGateway"
+      ResourceId:
+        Ref: "ApiResource"
+      HttpMethod: "POST"
+      AuthorizationType: "NONE"
+      ApiKeyRequired: false
+      Integration:
+        Type: "AWS"
+        IntegrationHttpMethod: "POST"
+        Uri:
+          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FirstLambda.Arn}/invocations"
+        IntegrationResponses:
+          - StatusCode: "200"
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,POST'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        Credentials: "arn:aws:iam::925299567289:role/LabRole"
+      MethodResponses:
+        - StatusCode: "200"
+          ResponseModels:
+            application/json: "Empty"
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: false
+            method.response.header.Access-Control-Allow-Methods: false
+            method.response.header.Access-Control-Allow-Origin: false
+
+  ApiStage:
+    Type: "AWS::ApiGateway::Stage"
+    Properties:
+      DeploymentId: !Ref Deploy
+      RestApiId: !Ref ApiGateway
+      StageName: "dev"
+
+  Deploy:
+    Type: "AWS::ApiGateway::Deployment"
+    Properties:
+      RestApiId: !Ref ApiGateway
+    DependsOn:
+      - ApiPost
+
+  SecureGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for the EC2 instance
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: 0.0.0.0/0
+
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      KeyName: vockey
+      ImageId: ami-053b0d53c279acc90
+      SecurityGroupIds:
+        - !Ref SecureGroup
+      Tags:
+        - Key: Name
+          Value: SFS-Frontend
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          sudo apt-get update -y
+          sudo apt-get install -y unzip
+          sudo apt-get install -y nodejs
+          sudo apt-get install -y npm
+          sudo apt-get install -y git
+          mkdir -p /var/www
+          git clone https://gitlab-ci-token:glpat-upygge2jcq9BcKSETJjK@git.cs.dal.ca/sdalvi/term-project-cloud.git /var/www
+          cd /var/www
+          sed -i "s|REACT_APP_API_URL=.*|REACT_APP_API_URL=https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/dev/upload|" .env
+          npm install
+          npm start
+
+Outputs:
+  EC2PublicIp:
+    Value: !GetAtt EC2Instance.PublicIp
+    Description: Public IP
